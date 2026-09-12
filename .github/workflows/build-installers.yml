@@ -1,0 +1,82 @@
+name: Build installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "version.txt"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "value=$(cat version.txt | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build EXE with PyInstaller
+        run: >
+          python -m PyInstaller --noconfirm --noconsole --onedir
+          --name "ToExe_Universal_Simple" --distpath dist --workpath build
+          --specpath spec src/main.py
+
+      - name: Write Inno Setup script
+        shell: bash
+        run: |
+          mkdir -p setup
+          cat > installer.iss <<EOF
+          [Setup]
+          AppName=ToExe Universal Simple
+          AppVersion=${{ steps.version.outputs.value }}
+          DefaultDirName={localappdata}\Programs\ToExe Universal Simple
+          DefaultGroupName=ToExe Universal Simple
+          OutputDir=setup
+          OutputBaseFilename=ToExe_Universal_Simple_Setup_v${{ steps.version.outputs.value }}
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+          PrivilegesRequired=lowest
+          [Files]
+          Source: "dist\ToExe_Universal_Simple\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          [Icons]
+          Name: "{group}\ToExe Universal Simple"; Filename: "{app}\ToExe_Universal_Simple.exe"
+          [Run]
+          Filename: "{app}\ToExe_Universal_Simple.exe"; Description: "Avvia ToExe"; Flags: nowait postinstall skipifsilent
+          EOF
+
+      - name: Compile installer with Inno Setup
+        run: iscc installer.iss
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ steps.version.outputs.value }}
+          path: |
+            dist/**
+            setup/**
+          if-no-files-found: warn
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
+          files: setup/*.exe
+          fail_on_unmatched_files: false
