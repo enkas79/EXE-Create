@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Output build locale di ToExe
+*_BuildOutput/
+spec/
+setup/
+installer.iss

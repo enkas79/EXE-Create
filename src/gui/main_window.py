@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -32,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.builder_core import BuildDetector, BuildThread, IconConversionService, SimpleBuildConfig
-from updater.updater import UpdateCheckThread, UpdateInfo, read_local_version
+from updater.updater import UpdateCheckThread, UpdateDownloadThread, UpdateInfo, read_local_version
 
 APP_DISPLAY_NAME = "ToExe Universal Simple"
 DEFAULT_COMPANY_NAME = "Enrico Martini"
@@ -62,6 +63,8 @@ class SimpleExeWindow(QMainWindow):
         super().__init__()
         self.worker: Optional[BuildThread] = None
         self.update_check_worker: Optional[UpdateCheckThread] = None
+        self.download_worker: Optional[UpdateDownloadThread] = None
+        self._update_check_silent = True
         self.config: Optional[SimpleBuildConfig] = None
         self.manual_icon_source_path: Optional[Path] = None
         self.app_version = read_app_version()
@@ -136,13 +139,44 @@ class SimpleExeWindow(QMainWindow):
             "Aggiornamento disponibile",
             f"E' disponibile la versione {info.version} (attuale: {self.app_version}).\n\n"
             f"Note di rilascio:\n{info.changelog}\n\n"
-            "Vuoi aprire la pagina di download?",
+            "Vuoi scaricare e installare l'aggiornamento?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            url = info.download_url or info.html_url
-            if url:
-                webbrowser.open(url)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not info.download_url:
+            if info.html_url:
+                webbrowser.open(info.html_url)
+            return
+        if self.download_worker and self.download_worker.isRunning():
+            return
+        asset_name = Path(info.download_url.split("?")[0]).name or "update.exe"
+        destination = Path(tempfile.gettempdir()) / "ToExe_Update" / asset_name
+        self.download_worker = UpdateDownloadThread(info.download_url, destination)
+        self.download_worker.progress.connect(self._on_download_progress)
+        self.download_worker.finished_signal.connect(self._on_download_finished)
+        self.status_label.setText(f"Download aggiornamento v{info.version} in corso...")
+        self.download_worker.start()
+
+    def _on_download_progress(self, percent: int) -> None:
+        self.status_label.setText(f"Download aggiornamento in corso: {percent}%")
+
+    def _on_download_finished(self, success: bool, message: str) -> None:
+        if not success:
+            QMessageBox.warning(self, "Download non riuscito", message)
+            return
+        self.status_label.setText(f"Aggiornamento scaricato: {message}")
+        try:
+            if os.name == "nt":
+                os.startfile(message)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", message])
+            else:
+                subprocess.Popen(["xdg-open", message])
+        except Exception as exc:
+            QMessageBox.warning(self, "Avvio installer non riuscito", str(exc))
+            return
+        self.close()
 
     def _on_up_to_date(self, current_version: str) -> None:
         if not self._update_check_silent:

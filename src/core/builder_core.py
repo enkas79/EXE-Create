@@ -38,6 +38,7 @@ class SimpleBuildConfig:
     required_modules: list[str] = field(default_factory=list)
     add_datas: list[tuple[Path, str]] = field(default_factory=list)
     excluded_modules: list[str] = field(default_factory=list)
+    windowed: bool = False
 
 
 class BuildDetector:
@@ -651,6 +652,8 @@ class BuildDetector:
             required_modules=cls.detect_required_modules(project_dir),
             add_datas=cls.detect_add_datas(project_dir),
             excluded_modules=cls.detect_excluded_modules(project_dir),
+            windowed=bool(cls.detect_qt_frameworks(project_dir))
+            or "tkinter" in cls.scan_source_imports(project_dir),
         )
 
 
@@ -856,7 +859,6 @@ class BuilderService:
         command = [
             *command_base,
             "--noconfirm",
-            "--noconsole",
             "--onedir",
             "--name",
             cfg.app_name,
@@ -868,6 +870,9 @@ class BuilderService:
             str(spec_path),
             "--clean",
         ]
+
+        if cfg.windowed:
+            command.append("--noconsole")
 
         for module in cfg.excluded_modules:
             command.extend(["--exclude-module", module])
